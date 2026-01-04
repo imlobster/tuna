@@ -58,8 +58,8 @@ public:
 	// Game loop calls
 
 	// Initialization call:
-	//     Must be called automatically first
-	//     time the snapshot is loaded.
+	//     Must be called automatically one
+	//     time right after the snapshot is loaded.
 	virtual void init(void) { return; }
 	// Loop call:
 	//     Must be called automatically, usually
@@ -68,11 +68,23 @@ public:
 	// Fixed loop call:
 	//     Must be called automatically, usually
 	//     at a deterministic interval, unlike Script::loop().
-	virtual void tick(void) { return; }
+	virtual void tick(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; return; }
+	// Post-loop call:
+	//     Must be called automatically, usually,
+	//     after all updates.
+	virtual void post(const float DELTA_TIME) { (void)DELTA_TIME; return; }
+	// Post-draw loop call:
+	//     Must be called automatically, usually,
+	//     after the draw call.
+	virtual void drew(const float DELTA_TIME) { (void)DELTA_TIME; return; }
 	// Death call:
 	//     Called automatically from World::kill_all_from_kill_queue() before
-	//     the parent object is deleted.
+	//     the parent object deletes. It
+	//     is not recommended to mutate
+	//     the parent object within this method.
 	virtual void dead(void) { return; }
+
+	// "Must be called automatically" means you need to call them with World::dispatch()
 };
 
 class Object : public std::enable_shared_from_this<Object> {
@@ -91,7 +103,7 @@ public:
 
 	// Find a script on the object and return iterator
 	template<typename T>
-	auto find(void) const {
+	auto find(void) {
 		return std::find_if(scripts.begin(), scripts.end(),
 			[](const std::shared_ptr<Script>& iscript) {
 				return dynamic_cast<T*>(iscript.get()) != nullptr;
@@ -101,7 +113,7 @@ public:
 
 	// Find a script on the object and return weak_ptr
 	template<typename T>
-	std::weak_ptr<T> seek(void) const {
+	std::weak_ptr<T> seek(void) {
 		for(const auto& script : scripts)
 			if(auto casted = std::dynamic_pointer_cast<T>(script)) return casted;
 		return std::weak_ptr<T>();
@@ -152,10 +164,19 @@ public:
 
 	// Clean the world
 	void clean(void) {
-		for(const auto& [_, object] : objects)
-			if(object) for(std::shared_ptr<Script>& script : object->scripts)
-				if(script) script->dead();
-		objects.clear();
+		if(objects.size() > 0) {
+			std::vector<std::shared_ptr<Script>> active;
+
+			for(const auto& [_, object] : objects) if(object)
+				for(auto& script : object->scripts) if(script)
+					active.emplace_back(script);
+
+			if(active.size() > 0)
+				for(auto& script : active) script->dead();
+			objects.clear();
+		}
+
+		kill_queue.clear();
 		last_id = -1;
 		return;
 	}
@@ -169,6 +190,8 @@ public:
 
 	// Find the object in the world
 	std::weak_ptr<Object> seek(ObjectID iid) {
+		if(objects.size() <= 0)
+			return std::weak_ptr<Object>();
 		auto found = objects.find(iid);
 		if(found == objects.end())
 			return std::weak_ptr<Object>();
@@ -191,28 +214,38 @@ public:
 	// Call a method on every object's script in the world
 	template<auto METHOD, typename... ARGS>
 	void dispatch(ARGS&&... iargs) {
-		kill_all_from_kill_queue();
-		for(const auto& [_, object] : objects)
-			if(object) for(std::shared_ptr<Script>& script : object->scripts)
-				if(script) (script.get()->*METHOD)(std::forward<ARGS>(iargs)...);
-		return;
-	}
+		if(objects.empty()) return;
 
-private:
-	// Kill all objects from the queue
-	void kill_all_from_kill_queue(void) {
-		if(kill_queue.size() <= 0) return;
+		std::vector<std::shared_ptr<Script>> active;
 
-		for(auto id : kill_queue) {
-			auto found = objects.find(id);
-			if(found == objects.end()) continue;
+		if(!kill_queue.empty()) {
+			std::vector<std::shared_ptr<Script>> dead;
 
-			for(std::shared_ptr<Script>& script : found->second->scripts)
-				if(script) script->dead();
-			objects.erase(found);
+			for(const auto& [objectid, object] : objects) if(object) {
+				if(kill_queue.contains(objectid)) {
+					for(auto& script : object->scripts) if(script)
+						dead.emplace_back(script);
+				} else {
+					for(auto& script : object->scripts) if(script)
+						active.emplace_back(script);
+				}
+			}
+
+			if(!dead.empty()) {
+				for(auto& script : dead) script->dead();
+				for(ObjectID id : kill_queue) objects.erase(id);
+				kill_queue.clear();
+			}
+		} else {
+			for(const auto& [objectid, object] : objects) if(object) {
+				for(auto& script : object->scripts) if(script)
+					active.emplace_back(script);
+			}
 		}
 
-		kill_queue.clear();
+		if(!active.empty()) for(auto& script : active)
+			(script.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+
 		return;
 	}
 };
