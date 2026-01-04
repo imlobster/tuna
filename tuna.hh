@@ -151,7 +151,14 @@ public:
 	// Objects manipulations
 
 	// Clean the world
-	void clean(void) { objects.clear(); last_id = -1; return; }
+	void clean(void) {
+		for(const auto& [_, object] : objects)
+			if(object) for(std::shared_ptr<Script>& script : object->scripts)
+				if(script) script->dead();
+		objects.clear();
+		last_id = -1;
+		return;
+	}
 
 	// Create an object in the world
 	std::shared_ptr<Object> create() {
@@ -187,7 +194,7 @@ public:
 		kill_all_from_kill_queue();
 		for(const auto& [_, object] : objects)
 			if(object) for(std::shared_ptr<Script>& script : object->scripts)
-			if(script) (script.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+				if(script) (script.get()->*METHOD)(std::forward<ARGS>(iargs)...);
 		return;
 	}
 
@@ -201,7 +208,7 @@ private:
 			if(found == objects.end()) continue;
 
 			for(std::shared_ptr<Script>& script : found->second->scripts)
-				if(script) script.get()->dead();
+				if(script) script->dead();
 			objects.erase(found);
 		}
 
@@ -222,7 +229,7 @@ private:
 
 // Define snapshot. Example:
 //     TUNA_SNAPSHOT(main) {
-//         world.clear();
+//         world.clean();
 //         ...
 //     }
 #define TUNA_SNAPSHOT(iname) \
