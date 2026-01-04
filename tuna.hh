@@ -51,12 +51,6 @@ public:
 	// Pointer to a script's parent
 	std::weak_ptr<Object> parent;
 
-private:
-	// Initialization marker:
-	//     Determines whether the script was
-	//     ever enabled.
-	bool started = false;
-
 public:
 	// Default destructor
 	virtual ~Script(void) = default;
@@ -70,7 +64,7 @@ public:
 	// Loop call:
 	//     Must be called automatically, usually
 	//     before each draw call.
-	virtual void loop(const float DELTA_TIME) { return; }
+	virtual void loop(const float DELTA_TIME) { (void)DELTA_TIME; return; }
 	// Fixed loop call:
 	//     Must be called automatically, usually
 	//     at a deterministic interval, unlike Script::loop().
@@ -150,12 +144,6 @@ private:
 	// Global ObjectID
 	ObjectID last_id = -1;
 
-	// Was anyone killed:
-	//     This flag is needed to
-	//     track the need to create a
-	//     new generation of objects ID.
-	bool killed_someone = false;
-
 	// Kill queue
 	std::unordered_set<ObjectID> kill_queue;
 
@@ -190,7 +178,6 @@ public:
 	bool kill(ObjectID iid) {
 		if(!objects.contains(iid)) return false;
 		kill_queue.insert(iid);
-		killed_someone = true;
 		return true;
 	}
 
