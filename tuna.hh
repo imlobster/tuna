@@ -58,8 +58,8 @@ public:
 	// Game loop calls
 
 	// Initialization call:
-	//     Must be called automatically one
-	//     time right after the snapshot is loaded.
+	//     Must be called automatically once
+	//     right after the snapshot is loaded.
 	virtual void init(void) { return; }
 	// Loop call:
 	//     Must be called automatically, usually
@@ -158,25 +158,27 @@ private:
 
 	// Kill queue
 	std::unordered_set<ObjectID> kill_queue;
+	std::unordered_set<ObjectID> init_queue;
 
 public:
 	// Objects manipulations
 
 	// Clean the world
 	void clean(void) {
-		if(objects.size() > 0) {
-			std::vector<std::shared_ptr<Script>> active;
+		if(!objects.empty()) {
+			std::vector<std::shared_ptr<Script>> scripts;
 
 			for(const auto& [_, object] : objects) if(object)
 				for(auto& script : object->scripts) if(script)
-					active.emplace_back(script);
+					scripts.emplace_back(script);
 
-			if(active.size() > 0)
-				for(auto& script : active) script->dead();
+			if(!scripts.empty())
+				for(auto& script : scripts) script->dead();
 			objects.clear();
 		}
 
 		kill_queue.clear();
+		init_queue.clear();
 		last_id = -1;
 		return;
 	}
@@ -185,12 +187,34 @@ public:
 	std::shared_ptr<Object> create() {
 		std::shared_ptr<Object> object = std::make_shared<Object>(++last_id);
 		objects.emplace(last_id, object);
+		init_queue.emplace(last_id);
 		return object;
+	}
+
+	// Call Script::init on every newborn object in the world
+	void init_newborns(void) {
+		if(init_queue.empty()) return;
+
+		std::vector<std::shared_ptr<Script>> newborns;
+
+		for(ObjectID id : init_queue) {
+			auto found = objects.find(id);
+			if(found == objects.end()) continue;
+
+			for(auto& script : found->second->scripts) if(script)
+				newborns.emplace_back(script);
+		}
+
+		if(!newborns.empty())
+			for(auto& newborn : newborns) newborn->init();
+
+		init_queue.clear();
+		return;
 	}
 
 	// Find the object in the world
 	std::weak_ptr<Object> seek(ObjectID iid) {
-		if(objects.size() <= 0)
+		if(objects.empty())
 			return std::weak_ptr<Object>();
 		auto found = objects.find(iid);
 		if(found == objects.end())
@@ -207,7 +231,7 @@ public:
 	//     on the next call to World::dispatch().
 	bool kill(ObjectID iid) {
 		if(!objects.contains(iid)) return false;
-		kill_queue.insert(iid);
+		kill_queue.emplace(iid);
 		return true;
 	}
 
@@ -216,35 +240,32 @@ public:
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) return;
 
-		std::vector<std::shared_ptr<Script>> active;
+		std::vector<std::shared_ptr<Script>> newborns, actives, deads;
 
-		if(!kill_queue.empty()) {
-			std::vector<std::shared_ptr<Script>> dead;
+		for(const auto& [objectid, object] : objects) if(object)
+			for(auto& script : object->scripts) if(script) {
+				if(init_queue.contains(objectid))
+					newborns.emplace_back(script);
 
-			for(const auto& [objectid, object] : objects) if(object) {
-				if(kill_queue.contains(objectid)) {
-					for(auto& script : object->scripts) if(script)
-						dead.emplace_back(script);
-				} else {
-					for(auto& script : object->scripts) if(script)
-						active.emplace_back(script);
-				}
+				if(kill_queue.contains(objectid))
+					deads.emplace_back(script);
+				else
+					actives.emplace_back(script);
 			}
 
-			if(!dead.empty()) {
-				for(auto& script : dead) script->dead();
-				for(ObjectID id : kill_queue) objects.erase(id);
-				kill_queue.clear();
-			}
-		} else {
-			for(const auto& [objectid, object] : objects) if(object) {
-				for(auto& script : object->scripts) if(script)
-					active.emplace_back(script);
-			}
+		if(!newborns.empty()) {
+			for(auto& newborn : newborns) newborn->init();
+			init_queue.clear();
 		}
 
-		if(!active.empty()) for(auto& script : active)
-			(script.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+		if(!deads.empty()) {
+			for(auto& dead : deads) dead->dead();
+			for(ObjectID id : kill_queue) objects.erase(id);
+			kill_queue.clear();
+		}
+
+		if(!actives.empty()) for(auto& active : actives)
+			(active.get()->*METHOD)(std::forward<ARGS>(iargs)...);
 
 		return;
 	}
@@ -265,11 +286,12 @@ public:
 //         world.clean();
 //         ...
 //     }
-#define TUNA_SNAPSHOT(iname) \
+#define TUNA_SNAPSHOT(iname) iname##_TUNA_SNAPSHOT_MARK_
+#define NEW_TUNA_SNAPSHOT(iname) \
 	void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World& world)
 // Load snapshot. Example:
 //     TUNA_LOAD_SNAPSHOT(main);
-//     world.dispatch<&::tuna::Script::init>();
+//     world.init_newborns();
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
-	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld);
+	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
 
