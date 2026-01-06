@@ -58,8 +58,10 @@ public:
 	// Game loop calls
 
 	// Initialization call:
-	//     Must be called automatically once
-	//     right after the snapshot is loaded.
+	//     Called automatically from World::dispatch() and
+	//     World::clean() first time the object appears in the world.
+	//     Can be called manually with World::init_newborns().
+	//     Will not be called if the script is granted after one.
 	virtual void init(void) { return; }
 	// Loop call:
 	//     Must be called automatically, usually
@@ -94,6 +96,10 @@ public:
 
 	// Object identifier
 	const ObjectID id;
+
+	// TODO: implement 'enabled' flag
+	// TODO: make init to be called automatically first time the script appears on the object
+	//       require moving dispatch/kill and alike logic to Object
 
 public:
 	// Default constructor
@@ -165,15 +171,28 @@ public:
 
 	// Clean the world
 	void clean(void) {
-		if(!objects.empty()) {
-			std::vector<std::shared_ptr<Script>> scripts;
+		if(!objects.empty()) [[likely]] {
+			std::vector<std::shared_ptr<Script>> newborns;
+			std::vector<std::shared_ptr<Script>> actives;
 
-			for(const auto& [_, object] : objects) if(object)
-				for(auto& script : object->scripts) if(script)
-					scripts.emplace_back(script);
+			for(const auto& [objectid, object] : objects) if(object) {
+				if(init_queue.contains(objectid)) {
+					for(auto& script : object->scripts) if(script) {
+						newborns.emplace_back(script);
+						actives.emplace_back(script);
+					}
+				} else {
+					for(auto& script : object->scripts) if(script)
+						actives.emplace_back(script);
+				}
+			}
 
-			if(!scripts.empty())
-				for(auto& script : scripts) script->dead();
+			if(!newborns.empty()) [[likely]]
+				for(auto& newborn : newborns) newborn->init();
+
+			if(!actives.empty()) [[likely]]
+				for(auto& active : actives) active->dead();
+
 			objects.clear();
 		}
 
@@ -193,19 +212,19 @@ public:
 
 	// Call Script::init on every newborn object in the world
 	void init_newborns(void) {
-		if(init_queue.empty()) return;
+		if(init_queue.empty()) [[unlikely]] return;
 
 		std::vector<std::shared_ptr<Script>> newborns;
 
-		for(ObjectID id : init_queue) {
-			auto found = objects.find(id);
+		for(ObjectID objectid : init_queue) {
+			auto found = objects.find(objectid);
 			if(found == objects.end()) continue;
 
 			for(auto& script : found->second->scripts) if(script)
 				newborns.emplace_back(script);
 		}
 
-		if(!newborns.empty())
+		if(!newborns.empty()) [[likely]]
 			for(auto& newborn : newborns) newborn->init();
 
 		init_queue.clear();
@@ -214,7 +233,7 @@ public:
 
 	// Find the object in the world
 	std::weak_ptr<Object> seek(ObjectID iid) {
-		if(objects.empty())
+		if(objects.empty()) [[unlikely]]
 			return std::weak_ptr<Object>();
 		auto found = objects.find(iid);
 		if(found == objects.end())
@@ -238,12 +257,12 @@ public:
 	// Call a method on every object's script in the world
 	template<auto METHOD, typename... ARGS>
 	void dispatch(ARGS&&... iargs) {
-		if(objects.empty()) return;
+		if(objects.empty()) [[unlikely]] return;
 
 		std::vector<std::shared_ptr<Script>> newborns, actives, deads;
 
-		for(const auto& [objectid, object] : objects) if(object)
-			for(auto& script : object->scripts) if(script) {
+		for(const auto& [objectid, object] : objects) if(object) [[likely]]
+			for(auto& script : object->scripts) if(script) [[likely]] {
 				if(init_queue.contains(objectid))
 					newborns.emplace_back(script);
 
@@ -264,8 +283,9 @@ public:
 			kill_queue.clear();
 		}
 
-		if(!actives.empty()) for(auto& active : actives)
-			(active.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+		if(!actives.empty()) [[likely]]
+			for(auto& active : actives)
+				(active.get()->*METHOD)(std::forward<ARGS>(iargs)...);
 
 		return;
 	}
