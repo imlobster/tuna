@@ -2,20 +2,9 @@
 	tuna                 maybe the tiniest C++ game framework
 	Copyright (C) 2026        imlobster <zhizhilik@gmail.com>
 
-	This library is free software; you can redistribute it and/or
-	modify it under the terms of the GNU Lesser General Public
-	License as published by the Free Software Foundation; either
-	version 2.1 of the License, or (at your option) any later version.
-
-	This library is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-	Lesser General Public License for more details.
-
-	You should have received a copy of the GNU Lesser General Public
-	License along with this library; if not, write to the Free Software
-	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
-	USA
+	This Source Code Form is subject to the terms of the Mozilla Public
+	License, v. 2.0. If a copy of the MPL was not distributed with this
+	file, You can obtain one at https://mozilla.org/MPL/2.0/.
 */
 
 #pragma once
@@ -57,12 +46,6 @@ public:
 
 	// Game loop calls
 
-	// Initialization call:
-	//     Called automatically from World::dispatch() and
-	//     World::clean() first time the object appears in the world.
-	//     Can be called manually with World::init_newborns().
-	//     Will not be called if the script is granted after one.
-	virtual void init(void) { return; }
 	// Loop call:
 	//     Must be called automatically, usually
 	//     before each draw call.
@@ -79,27 +62,17 @@ public:
 	//     Must be called automatically, usually,
 	//     after the draw call.
 	virtual void drew(const float DELTA_TIME) { (void)DELTA_TIME; return; }
-	// Death call:
-	//     Called automatically from World::kill_all_from_kill_queue() before
-	//     the parent object deletes. It
-	//     is not recommended to mutate
-	//     the parent object within this method.
-	virtual void dead(void) { return; }
 
 	// "Must be called automatically" means you need to call them with World::dispatch()
 };
 
 class Object : public std::enable_shared_from_this<Object> {
 public:
-	// Script container
-	std::vector<std::shared_ptr<Script>> scripts;
-
 	// Object identifier
 	const ObjectID id;
 
-	// TODO: implement 'enabled' flag
-	// TODO: make init to be called automatically first time the script appears on the object
-	//       require moving dispatch/kill and alike logic to Object
+	// Script container
+	std::vector<std::shared_ptr<Script>> scripts;
 
 public:
 	// Default constructor
@@ -132,15 +105,16 @@ public:
 	//     reference to it. Arguments passed
 	//     to the constructor will be ignored.
 	template<typename T, typename... ARGS>
-	std::shared_ptr<T> grant(ARGS&&... iargs) {
+	std::weak_ptr<T> grant(ARGS&&... iargs) {
 		// If a script is already on the object -- return it
 		if(auto found = find<T>(); found != scripts.end())
 			return std::static_pointer_cast<T>(*found);
 
 		std::shared_ptr<T> script = std::make_shared<T>(std::forward<ARGS>(iargs)...);
+		std::weak_ptr<T> ref(script);
 		script->parent = shared_from_this();
-		scripts.emplace_back(script);
-		return script;
+		scripts.emplace_back(std::move(script));
+		return ref;
 	}
 
 	// Take a script from the object
@@ -159,76 +133,29 @@ public:
 	std::unordered_map<ObjectID, std::shared_ptr<Object>> objects;
 
 private:
-	// Global ObjectID
-	ObjectID last_id = -1;
-
 	// Kill queue
 	std::unordered_set<ObjectID> kill_queue;
-	std::unordered_set<ObjectID> init_queue;
+
+	// Global ObjectID
+	ObjectID last_id = -1;
 
 public:
 	// Objects manipulations
 
 	// Clean the world
 	void clean(void) {
-		if(!objects.empty()) [[likely]] {
-			std::vector<std::shared_ptr<Script>> newborns;
-			std::vector<std::shared_ptr<Script>> actives;
-
-			for(const auto& [objectid, object] : objects) if(object) {
-				if(init_queue.contains(objectid)) {
-					for(auto& script : object->scripts) if(script) {
-						newborns.emplace_back(script);
-						actives.emplace_back(script);
-					}
-				} else {
-					for(auto& script : object->scripts) if(script)
-						actives.emplace_back(script);
-				}
-			}
-
-			if(!newborns.empty()) [[likely]]
-				for(auto& newborn : newborns) newborn->init();
-
-			if(!actives.empty()) [[likely]]
-				for(auto& active : actives) active->dead();
-
-			objects.clear();
-		}
-
+		objects.clear();
 		kill_queue.clear();
-		init_queue.clear();
 		last_id = -1;
 		return;
 	}
 
 	// Create an object in the world
-	std::shared_ptr<Object> create() {
+	std::weak_ptr<Object> create() {
 		std::shared_ptr<Object> object = std::make_shared<Object>(++last_id);
-		objects.emplace(last_id, object);
-		init_queue.emplace(last_id);
-		return object;
-	}
-
-	// Call Script::init on every newborn object in the world
-	void init_newborns(void) {
-		if(init_queue.empty()) [[unlikely]] return;
-
-		std::vector<std::shared_ptr<Script>> newborns;
-
-		for(ObjectID objectid : init_queue) {
-			auto found = objects.find(objectid);
-			if(found == objects.end()) continue;
-
-			for(auto& script : found->second->scripts) if(script)
-				newborns.emplace_back(script);
-		}
-
-		if(!newborns.empty()) [[likely]]
-			for(auto& newborn : newborns) newborn->init();
-
-		init_queue.clear();
-		return;
+		std::weak_ptr<Object> ref(object);
+		objects.emplace(last_id, std::move(object));
+		return ref;
 	}
 
 	// Find the object in the world
@@ -259,26 +186,15 @@ public:
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) [[unlikely]] return;
 
-		std::vector<std::shared_ptr<Script>> newborns, actives, deads;
+		std::vector<std::shared_ptr<Script>> actives, deads;
 
 		for(const auto& [objectid, object] : objects) if(object) [[likely]]
 			for(auto& script : object->scripts) if(script) [[likely]] {
-				if(init_queue.contains(objectid))
-					newborns.emplace_back(script);
-
-				if(kill_queue.contains(objectid))
-					deads.emplace_back(script);
-				else
-					actives.emplace_back(script);
+				if(kill_queue.contains(objectid)) deads.emplace_back(script);
+				else actives.emplace_back(script);
 			}
 
-		if(!newborns.empty()) {
-			for(auto& newborn : newborns) newborn->init();
-			init_queue.clear();
-		}
-
 		if(!deads.empty()) {
-			for(auto& dead : deads) dead->dead();
 			for(ObjectID id : kill_queue) objects.erase(id);
 			kill_queue.clear();
 		}
@@ -301,17 +217,12 @@ public:
 //     macros to separate regular methods
 //     from snapshots.
 
-// Define snapshot. Example:
-//     TUNA_SNAPSHOT(main) {
-//         world.clean();
-//         ...
-//     }
-#define TUNA_SNAPSHOT(iname) iname##_TUNA_SNAPSHOT_MARK_
-#define NEW_TUNA_SNAPSHOT(iname) \
+// Append a snapshot mark to provided identifier
+#define TUNA_SNAPSHOT(iname) \
+	iname##_TUNA_SNAPSHOT_MARK_
+// Define snapshot
+#define TUNA_NEW_SNAPSHOT(iname) \
 	void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World& world)
-// Load snapshot. Example:
-//     TUNA_LOAD_SNAPSHOT(main);
-//     world.init_newborns();
+// Load snapshot
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
 	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
-
