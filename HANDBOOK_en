@@ -1,0 +1,401 @@
+
+
+tuna handbook                       last revision 31.01.2026
+
+
+Contents
+------------------------------------------------------------
+
+    Disclaimer                                        32
+    Introduction                                      41
+    Installation                                      51
+    License                                           68
+    Philosophy                                        79
+
+    Classes                                           95
+      Script                                        98
+      Object                                       122
+      World                                        159
+
+    Runtime                                          192
+      Initialization and Destruction               195
+      Loops                                        201
+
+    Basics                                           224
+      Snapshots                                    227
+      Prefabs                                      260
+      References                                   274
+
+    Implementation                                   295
+
+
+Disclaimer
+------------------------------------------------------------
+
+    At the moment, tuna is in the public testing phase, so
+the architecture and the hanbook may be significantly
+changed.  tuna is not stable and not ready for production,
+but testing something new is always fun!
+
+
+Introduction
+------------------------------------------------------------
+
+    tuna is a relatively small header-only framework for
+developing games in C++.  The only thing it imposes is the
+architecture.  You are free to choose the rendering, sound
+system, input library, and resource manager.  tuna only
+implements the object model of the game world.
+
+
+Installation
+------------------------------------------------------------
+
+    tuna can be conveniently installed in two ways.
+
+    1.  Download the tuna.hh file and put it in your
+        project's include path.
+
+    2.  Clone or make this repository a submodule.  Add its
+        directory as another include path for your project.
+        Installing this way is the most suitable if you need
+        to have the latest version of tuna.
+
+    tuna uses C++20 features and cannot be compiled on C++17
+    and earlier standards.
+
+
+License
+------------------------------------------------------------
+
+    tuna is licensed under MPL 2.0, a free software licence
+distributed by mozilla.  it belongs to the category of weak
+copyleft licences.  this means that you can use code
+licensed under mpl 2.0 in projects with a different licence
+or in closed-source projects.  however, any changes must be
+made public.
+
+
+Philosophy
+------------------------------------------------------------
+
+    It is important to clarify that simply installing tuna
+in your project will not even give you an empty project.
+This is because imposing too much in a single library often
+leads to someone not liking a certain part of it.  But
+because the library is a single entity, replacing that part
+will be quite difficult.
+
+    Tuna gives you flexibility, but you have to pay for it
+with extra time spent implementing some things manually.
+However, this guide has a Implementation section that will
+help you with one.
+
+
+Classes
+------------------------------------------------------------
+
+    Script (tuna::Script):
+            This is what grants behaviour to the objects.
+        This is where you write your game logic.  Inherit
+        your script from this class to be able to grant it
+        to an object.
+
+            Pointer to the parent, which is assigned
+        automatically when granting a script to an object:
+
+std::weak_ptr<Object> parent
+
+        Default destructor:
+
+virtual ~Script(void)
+
+            Game loop methods (Their description is in the
+        Runtime, Cycles section):
+
+virtual void loop(const float DELTA_TIME)
+virtual void step(const float FIXED_DELTA_TIME)
+virtual void post(const float DELTA_TIME)
+virtual void drew(const float DELTA_TIME)
+
+
+    Object (tuna::Object):
+            Simply a script container.
+
+            Unique object ID that is being assigned on
+        object creation:
+
+const ObjectID id
+
+            Script container itself:
+
+std::vector<std::shared_ptr<Script>> scripts
+
+            Default constructor:
+
+Object(ObjectID iid) : id(iid)
+
+            Find a script on the object and get an iterator
+        on it:
+
+template<typename T> auto find(void)
+
+            Find a script on the object and get a reference
+        on it:
+
+template<typename T> std::weak_ptr<T> seek(void)
+
+            Grant a script to the object and pass arguments
+        to script's constructor.  If the script is already
+        on the object, arguments will be ignored:
+
+template<typename T, typename... ARGS> std::weak_ptr<T> grant(ARGS&&... iargs)
+
+            Take a script from the object:
+
+template<typename T> bool take(void)
+
+
+    World (tuna::World):
+            The world is a container of objects and also a
+        game loop manager.  It has a dispatch method that is
+        used to call game loop methods on all active scripts
+        in the world.
+
+            Object container itself:
+
+std::unordered_map<ObjectID, std::shared_ptr<Object>> objects
+
+            Do an entire world cleanup:
+
+void clean(void)
+
+            Instantiate an object in this world:
+
+std::weak_ptr<Object> create(void)
+
+            Find an object with the unique ID:
+
+std::weak_ptr<Object> seek(ObjectID iid)
+
+            Put the object in the kill queue.  Object will
+        be destroyed in the next cleanup.
+
+bool kill(ObjectID iid)
+
+            Call the method on every active script in the
+        world:
+
+template<auto METHOD, typename... ARGS> void dispatch(ARGS&&... iargs)
+
+
+Runtime
+------------------------------------------------------------
+
+    Initialization and Destruction:
+            In tuna, scripts do not have methods such as
+        Start or OnDestroyed.  Instead, use constructors and
+        destructors.
+
+
+    Loops:
+            There are several types of loops in tuna.  All
+        of them are tuna::Script methods.  Below are their
+        descriptions in the order in which they should be
+        called:
+
+            tuna::Script::step — being called with a fixed
+        step.  Takes const float FIXED_DELTA_TIME as an
+        arguments.
+
+            tuna::Script::loop — being called before each
+        draw call.  Takes const float DELTA_TIME as an
+        arguments.
+
+            tuna::Script::post — being called immediately
+        after the tuna::Script::loop.  Takes const float
+        DELTA_TIME as an arguments.
+
+            tuna::Script::drew — being called after each
+        draw call.  Takes const float DELTA_TIME as an
+        arguments.
+
+
+Basics
+------------------------------------------------------------
+
+    Snapshots:
+            Tuna does not have scenes in the usual way that
+        game engines do.  Instead, it has snapshots.
+        Snapshots are just a way to call methods that create
+        and delete objects.
+
+            Usual way to define scene:
+
+TUNA_NEW_SNAPSHOT(main) {
+    world.clean();
+    ...
+    return;
+}
+
+            The world.clean call is required to ensure that
+        when the snapshot is reloaded, the world is
+        rewritten, mimicking the behaviour of switching
+        scenes.
+
+            You can skip cleaning up the world inside the
+        snapshot itself if you want to implement the scene
+        manager separately.
+
+            Snapshots are loaded in this way:
+
+TUNA_LOAD_SNAPSHOT(main, world);
+
+            And you can get the name of the snapshot this
+        way:
+
+TUNA_SNAPSHOT(main)
+
+
+    Prefabs:
+            tuna doesn't have them either.  But considering
+        previous experience with snapshots, we can improvise
+        again:
+
+void player_prefab(std::weak_ptr<tuna::Object> obj, Some controller) {
+    auto object = obj.lock();
+    if(!object) return;
+    object->grant<PlayerMovement>(controller);
+    ...
+    return;
+}
+
+
+    References:
+            tuna does not have a search function by script
+        or object name, so finding the desired script will
+        be difficult.  But there is no need to search.
+        Since we already create and store all scripts and
+        objects in snapshots, references can be passed
+        directly from them:
+
+TUNA_NEW_SNAPSHOT(main) {
+    world.clean();
+
+    // Player
+    if(auto obj = world.create().lock()) {
+        auto transform = obj->grant<Transform>();
+        auto playermovement = obj->grant<PlayerMovement>(transform);
+    }
+
+    return;
+}
+
+
+Implementation
+------------------------------------------------------------
+
+    Let's assume that you have already installed tuna and
+your preferred rendering library.  For example, here we will
+use an abstract ‘draw’.  Declare the main function — it will
+be the main one.
+
+int main(void) {
+    return 0;
+}
+
+    Next, initialise the window and prepare the drawing
+loop.
+
+int main(void) {
+    draw::create_window(400, 400, "Tuna!");
+
+    while(!draw::window_should_close()) {
+        draw::begin_drawing();
+            draw::fill(draw::color::sky_blue);
+        draw::end_drawing();
+    }
+
+    draw::destroy_window();
+    return 0;
+}
+
+    Now we can move on to integrating tuna.  We'll create a
+world and insert basic global calls.  We'll also create a
+basic snapshot and load it.
+
+TUNA_NEW_SNAPSHOT(Main) {
+    world.clean();
+    return;
+}
+
+int main(void) {
+    draw::create_window(400, 400, "Tuna!");
+
+    float delta_time = 0.0f;
+
+    tuna::World world;
+    TUNA_LOAD_SNAPSHOT(Main, world);
+
+    while(!draw::window_should_close()) {
+        world.dispatch<&tuna::Script::loop>(delta_time);
+        world.dispatch<&tuna::Script::post>(delta_time);
+
+        draw::begin_drawing();
+            draw::fill(draw::color::sky_blue);
+        draw::end_drawing();
+
+        delta_time = draw::get_frame_time();
+
+        world.dispatch<&tuna::Script::drew>(delta_time);
+    }
+
+    world.clean();
+    draw::destroy_window();
+    return 0;
+}
+
+    For completeness, we will implement a call with a fixed
+step.
+
+TUNA_NEW_SNAPSHOT(Main) {
+    world.clean();
+    return;
+}
+
+int main(void) {
+    draw::create_window(400, 400, "Tuna!");
+
+    float delta_time = 0.0f;
+    constexpr float fixed_delta_time = 1.0 / 50.0f;
+    float time_accumulator = 0;
+
+    tuna::World world;
+    TUNA_LOAD_SNAPSHOT(Main, world);
+
+    while(!draw::window_should_close()) {
+        while(time_accumulator >= fixed_delta_time) {
+            world.dispatch<&tuna::Script::step>(fixed_delta_time);
+            time_accumulator -= fixed_delta_time;
+        }
+
+        world.dispatch<&tuna::Script::loop>(delta_time);
+        world.dispatch<&tuna::Script::post>(delta_time);
+
+        draw::begin_drawing();
+            draw::fill(draw::color::sky_blue);
+        draw::end_drawing();
+
+        delta_time = draw::get_frame_time();
+        time_accumulator += delta_time;
+
+        world.dispatch<&tuna::Script::drew>(delta_time);
+    }
+
+    world.clean();
+    draw::destroy_window();
+    return 0;
+}
+
+    All done!  That's all you need to get started with tuna.
+

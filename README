@@ -1,0 +1,75 @@
+
+
+tuna                    maybe the tiniest C++ game framework
+
+
+Current state
+------------------------------------------------------------
+
+    At the moment, tuna is in public testing and may contain
+bugs, memory and performance related issues.  You can
+support the development of this project!  Create an issue if
+you find a bug or contribute.
+
+
+Description
+------------------------------------------------------------
+
+    tuna is a small header-only game engine written in C++.
+What sets tuna apart from others is its implementation
+approach.  tuna does not have a resource manager, particle
+system, renderer, or anything like that.  All you get is the
+architecture.
+
+    The relatively small header contains a component system
+and a world model written in the OOP paradigm, which
+provides a familiar user experience (similar to Unity).
+
+    The decision to use OOP instead of ECS was made because
+it is more flexible for 90% of games, has a smoother
+learning curve, and is faster to develop and prototype.  If
+performance is more critical to you, tuna is not the right
+choice.
+
+
+Installation
+------------------------------------------------------------
+
+    tuna is written in C++20 and uses its new features.  To
+install, put tuna.hh in your include paths.  Or you can
+clone this repository and add it as another path.  tuna has
+no third-party dependencies, so don't worry.
+
+
+Overview
+------------------------------------------------------------
+
+    tuna has three main architectural components: Script,
+Object, and World.
+
+    World is the place where all objects in the world are
+located.  Its methods allow you to create objects, delete
+objects, search for objects, and call Script methods on all
+objects it stores.
+
+    Object is a container of scripts.  It has no logic on
+its own — it is provided by your scripts.  It has methods
+for assigning a script to an object, as well as for deleting
+and searching for a script.
+
+    Script is the base class for your scripts.  It has
+several virtual methods that form the game loop.
+
+    Documentation, usage, features, decisions and tips can
+be found in HANDBOOK file.  (HANDBOOK will be translated
+into several languages.  Original was written in Russian)
+
+
+License
+------------------------------------------------------------
+
+Author                       imlobster <zhizhilik@gmail.com>
+Licensed under            Mozilla Public License Version 2.0
+
+                                                    (c) 2026
+

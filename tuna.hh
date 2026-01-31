@@ -53,7 +53,7 @@ public:
 	// Fixed loop call:
 	//     Must be called automatically, usually
 	//     at a deterministic interval, unlike Script::loop().
-	virtual void tick(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; return; }
+	virtual void step(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; return; }
 	// Post-loop call:
 	//     Must be called automatically, usually,
 	//     after all updates.
@@ -151,7 +151,7 @@ public:
 	}
 
 	// Create an object in the world
-	std::weak_ptr<Object> create() {
+	std::weak_ptr<Object> create(void) {
 		std::shared_ptr<Object> object = std::make_shared<Object>(++last_id);
 		std::weak_ptr<Object> ref(object);
 		objects.emplace(last_id, std::move(object));
@@ -186,7 +186,7 @@ public:
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) [[unlikely]] return;
 
-		std::vector<std::shared_ptr<Script>> actives, deads;
+		std::vector<std::weak_ptr<Script>> actives, deads;
 
 		for(const auto& [objectid, object] : objects) if(object) [[likely]]
 			for(auto& script : object->scripts) if(script) [[likely]] {
@@ -197,11 +197,12 @@ public:
 		if(!deads.empty()) {
 			for(ObjectID id : kill_queue) objects.erase(id);
 			kill_queue.clear();
+			deads.clear();
 		}
 
 		if(!actives.empty()) [[likely]]
-			for(auto& active : actives)
-				(active.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+			for(auto& active : actives) if(auto ptr = active.lock())
+				(ptr.get()->*METHOD)(std::forward<ARGS>(iargs)...);
 
 		return;
 	}
@@ -226,3 +227,4 @@ public:
 // Load snapshot
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
 	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
+
