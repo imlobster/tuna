@@ -68,11 +68,11 @@ public:
 
 class Object : public std::enable_shared_from_this<Object> {
 public:
-	// Object identifier
-	const ObjectID id;
-
 	// Script container
 	std::vector<std::shared_ptr<Script>> scripts;
+
+	// Object identifier
+	const ObjectID id;
 
 public:
 	// Default constructor

@@ -15,11 +15,11 @@ you find a bug or contribute.
 Description
 ------------------------------------------------------------
 
-    tuna is a small header-only game engine written in C++.
-What sets tuna apart from others is its implementation
-approach.  tuna does not have a resource manager, particle
-system, renderer, or anything like that.  All you get is the
-architecture.
+    tuna is a small header-only game development framework
+written in C++.  What sets tuna apart from others is its
+implementation approach.  tuna does not have a resource
+manager, particle system, renderer, or anything like that.
+All you get is the architecture.
 
     The relatively small header contains a component system
 and a world model written in the OOP paradigm, which
