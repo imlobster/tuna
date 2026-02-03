@@ -14,6 +14,7 @@
 	#include <cstdio>
 #endif
 #include <memory>
+#include <concepts>
 #include <algorithm>
 #include <vector>
 #include <unordered_map>
@@ -33,6 +34,10 @@ class Object;
 // Game world:
 //     Manages objects and the game loop.
 class World;
+
+// Script concept
+template<typename T>
+concept ScriptT = std::derived_from<T, Script>;
 
 // Game object identifier
 using ObjectID = std::uint64_t;
@@ -85,7 +90,7 @@ public:
 	// Scripts manipulations
 
 	// Find a script on the object and return iterator
-	template<typename T>
+	template<ScriptT T>
 	auto find(void) {
 		return std::find_if(scripts.begin(), scripts.end(),
 			[](const std::shared_ptr<Script> &iscript) {
@@ -95,7 +100,7 @@ public:
 	}
 
 	// Find a script on the object and return weak_ptr
-	template<typename T>
+	template<ScriptT T>
 	std::weak_ptr<T> seek(void) {
 		for(const auto &script : scripts)
 			if(auto casted = std::dynamic_pointer_cast<T>(script)) return casted;
@@ -108,7 +113,7 @@ public:
 	//     the method will return a
 	//     reference to it. Arguments passed
 	//     to the constructor will be ignored.
-	template<typename T, typename... ARGS>
+	template<ScriptT T, typename... ARGS>
 	std::weak_ptr<T> grant(ARGS&&... iargs) {
 		// If a script is already on the object -- return it
 		if(auto found = find<T>(); found != scripts.end())
@@ -122,7 +127,7 @@ public:
 	}
 
 	// Take a script from the object
-	template<typename T>
+	template<ScriptT T>
 	bool take(void) {
 		auto found = find<T>();
 		if(found == scripts.end()) return false;
