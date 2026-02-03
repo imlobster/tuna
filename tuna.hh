@@ -10,6 +10,9 @@
 #pragma once
 
 #include <cstdint>
+#ifndef TUNA_RESTRICT_ANY_IO
+	#include <cstdio>
+#endif
 #include <memory>
 #include <algorithm>
 #include <vector>
@@ -27,11 +30,12 @@ class Script;
 // Game object:
 //     Script container.
 class Object;
-// Game object identifier
-using ObjectID = std::uint64_t;
 // Game world:
 //     Manages objects and the game loop.
 class World;
+
+// Game object identifier
+using ObjectID = std::uint64_t;
 
 	// Core types implementation
 
@@ -41,29 +45,29 @@ public:
 	std::weak_ptr<Object> parent;
 
 public:
-	// Default destructor
-	virtual ~Script(void) = default;
-
 	// Game loop calls
 
 	// Loop call:
 	//     Must be called automatically, usually
 	//     before each draw call.
-	virtual void loop(const float DELTA_TIME) { (void)DELTA_TIME; return; }
+	virtual void loop(const float DELTA_TIME) { (void)DELTA_TIME; }
 	// Fixed loop call:
 	//     Must be called automatically, usually
 	//     at a deterministic interval, unlike Script::loop().
-	virtual void step(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; return; }
+	virtual void step(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; }
 	// Post-loop call:
 	//     Must be called automatically, usually,
 	//     after all updates.
-	virtual void post(const float DELTA_TIME) { (void)DELTA_TIME; return; }
+	virtual void post(const float DELTA_TIME) { (void)DELTA_TIME; }
 	// Post-draw loop call:
 	//     Must be called automatically, usually,
 	//     after the draw call.
-	virtual void drew(const float DELTA_TIME) { (void)DELTA_TIME; return; }
+	virtual void drew(const float DELTA_TIME) { (void)DELTA_TIME; }
 
 	// "Must be called automatically" means you need to call them with World::dispatch()
+
+	// Default destructor
+	virtual ~Script(void) = default;
 };
 
 class Object : public std::enable_shared_from_this<Object> {
@@ -76,7 +80,7 @@ public:
 
 public:
 	// Default constructor
-	Object(ObjectID iid) : id(iid) { return; }
+	Object(ObjectID iid) : id(iid) { }
 
 	// Scripts manipulations
 
@@ -84,7 +88,7 @@ public:
 	template<typename T>
 	auto find(void) {
 		return std::find_if(scripts.begin(), scripts.end(),
-			[](const std::shared_ptr<Script>& iscript) {
+			[](const std::shared_ptr<Script> &iscript) {
 				return dynamic_cast<T*>(iscript.get()) != nullptr;
 			}
 		);
@@ -93,7 +97,7 @@ public:
 	// Find a script on the object and return weak_ptr
 	template<typename T>
 	std::weak_ptr<T> seek(void) {
-		for(const auto& script : scripts)
+		for(const auto &script : scripts)
 			if(auto casted = std::dynamic_pointer_cast<T>(script)) return casted;
 		return std::weak_ptr<T>();
 	}
@@ -111,7 +115,7 @@ public:
 			return std::static_pointer_cast<T>(*found);
 
 		std::shared_ptr<T> script = std::make_shared<T>(std::forward<ARGS>(iargs)...);
-		std::weak_ptr<T> ref(script);
+		std::weak_ptr<T> ref = script;
 		script->parent = shared_from_this();
 		scripts.emplace_back(std::move(script));
 		return ref;
@@ -125,6 +129,8 @@ public:
 		scripts.erase(found);
 		return true;
 	}
+
+	void clean(void) { scripts.clear(); return; }
 };
 
 class World {
@@ -139,6 +145,11 @@ private:
 	// Global ObjectID
 	ObjectID last_id = -1;
 
+	// Stores the number of scripts
+	// that were found active from
+	// the latest dispatch.
+	size_t last_script_count = 0;
+
 public:
 	// Objects manipulations
 
@@ -152,8 +163,11 @@ public:
 
 	// Create an object in the world
 	std::weak_ptr<Object> create(void) {
-		std::shared_ptr<Object> object = std::make_shared<Object>(++last_id);
-		std::weak_ptr<Object> ref(object);
+		ObjectID new_id = 1 + last_id;
+			std::shared_ptr<Object> object = std::make_shared<Object>(new_id);
+		last_id = new_id;
+
+		std::weak_ptr<Object> ref = object;
 		objects.emplace(last_id, std::move(object));
 		return ref;
 	}
@@ -188,8 +202,13 @@ public:
 
 		std::vector<std::weak_ptr<Script>> actives, deads;
 
-		for(const auto& [objectid, object] : objects) if(object) [[likely]]
-			for(auto& script : object->scripts) if(script) [[likely]] {
+		if(last_script_count <= 0)
+			last_script_count = objects.size();
+
+		actives.reserve(last_script_count); deads.reserve(last_script_count);
+
+		for(const auto &[objectid, object] : objects) if(object) [[likely]]
+			for(auto &script : object->scripts) if(script) [[likely]] {
 				if(kill_queue.contains(objectid)) deads.emplace_back(script);
 				else actives.emplace_back(script);
 			}
@@ -201,16 +220,57 @@ public:
 		}
 
 		if(!actives.empty()) [[likely]]
-			for(auto& active : actives) if(auto ptr = active.lock())
+			for(auto &active : actives) if(auto ptr = active.lock())
 				(ptr.get()->*METHOD)(std::forward<ARGS>(iargs)...);
 
+		last_script_count = actives.size();
 		return;
 	}
 };
 
-} // namespace tuna
+	// QoL things:
+	//     Macros and hacks to simplify tuna.
+	//     Their usage is not mandatory.
 
-	// QoL marcos
+// Locked pointer:
+//     std::shared_ptr wrapper.
+//     Use this when obtaining a null pointer from
+//     std::weak_ptr::lock() is not acceptable.
+template<typename T>
+struct locked_ptr {
+	std::shared_ptr<T> ptr;
+
+	T* operator->() { return ptr.get(); }
+	const T* operator->() const { return ptr.get(); }
+
+	T& operator*() { return *ptr; }
+	const T& operator*() const { return *ptr; }
+
+	operator std::shared_ptr<T>() { return ptr; }
+
+	template<typename U>
+	locked_ptr(std::weak_ptr<U> isource) {
+		ptr = isource.lock();
+		if(ptr) return;
+
+#ifndef TUNA_RESTRICT_ANY_IO
+		fprintf(stderr, "\ntuna: null pointer type of %s was obtained in a context where it is not acceptable.\n", typeid(T).name());
+#endif
+		exit(1);
+	}
+
+	locked_ptr(const locked_ptr &iother) : ptr(iother.ptr) { }
+	locked_ptr(locked_ptr &&iother) noexcept : ptr(std::move(iother.ptr)) { }
+
+	locked_ptr& operator=(const locked_ptr &iother)
+		{ ptr = iother.ptr; return *this; }
+	locked_ptr& operator=(locked_ptr &&iother)
+		noexcept { ptr = std::move(iother.ptr); return *this; }
+
+	~locked_ptr() = default;
+};
+
+} // namespace tuna
 
 // tuna snapshots:
 //     Snapshots are an alternative to
@@ -218,13 +278,26 @@ public:
 //     macros to separate regular methods
 //     from snapshots.
 
-// Append a snapshot mark to provided identifier
+// Append a snapshot mark to a provided identifier
 #define TUNA_SNAPSHOT(iname) \
 	iname##_TUNA_SNAPSHOT_MARK_
 // Define snapshot
 #define TUNA_NEW_SNAPSHOT(iname) \
-	void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World& world)
+	void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World &world)
 // Load snapshot
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
 	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
+
+// tuna samples:
+//     Samples are an alternative to
+//     prefabs in tuna. Use these
+//     macros to separate regular methods
+//     from samples.
+
+// Append a sample mark to a provided identifier
+#define TUNA_SAMPLE(iname) \
+	iname##_TUNA_SAMPLE_MARK_
+// Define sample
+#define TUNA_NEW_SAMPLE(iname) \
+	void iname##_TUNA_SAMPLE_MARK_
 
