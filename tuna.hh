@@ -28,16 +28,18 @@ namespace tuna {
 //     Inherit the script from this
 //     class to be able to assign it to an object.
 class Script;
+
+// Script concept
+template<typename T>
+concept ScriptT = std::derived_from<T, Script>;
+
 // Game object:
 //     Script container.
 class Object;
 // Game world:
 //     Manages objects and the game loop.
+template<ScriptT BASE_SCRIPT>
 class World;
-
-// Script concept
-template<typename T>
-concept ScriptT = std::derived_from<T, Script>;
 
 // Game object identifier
 using ObjectID = std::uint64_t;
@@ -48,28 +50,6 @@ class Script {
 public:
 	// Pointer to a script's parent
 	std::weak_ptr<Object> parent;
-
-public:
-	// Game loop calls
-
-	// Loop call:
-	//     Must be called automatically, usually
-	//     before each draw call.
-	virtual void loop(const float DELTA_TIME) { (void)DELTA_TIME; }
-	// Fixed loop call:
-	//     Must be called automatically, usually
-	//     at a deterministic interval, unlike Script::loop().
-	virtual void step(const float FIXED_DELTA_TIME) { (void)FIXED_DELTA_TIME; }
-	// Post-loop call:
-	//     Must be called automatically, usually,
-	//     after all updates.
-	virtual void post(const float DELTA_TIME) { (void)DELTA_TIME; }
-	// Post-draw loop call:
-	//     Must be called automatically, usually,
-	//     after the draw call.
-	virtual void drew(const float DELTA_TIME) { (void)DELTA_TIME; }
-
-	// "Must be called automatically" means you need to call them with World::dispatch()
 
 	// Default destructor
 	virtual ~Script(void) = default;
@@ -138,6 +118,7 @@ public:
 	void clean(void) { scripts.clear(); return; }
 };
 
+template<ScriptT BASE_SCRIPT>
 class World {
 public:
 	// Object container
@@ -226,7 +207,7 @@ public:
 
 		if(!actives.empty()) [[likely]]
 			for(auto &active : actives) if(auto ptr = active.lock())
-				(ptr.get()->*METHOD)(std::forward<ARGS>(iargs)...);
+				(static_cast<BASE_SCRIPT*>(ptr.get())->*METHOD)(std::forward<ARGS>(iargs)...);
 
 		last_script_count = actives.size();
 		return;
@@ -288,7 +269,8 @@ struct locked_ptr {
 	iname##_TUNA_SNAPSHOT_MARK_
 // Define snapshot
 #define TUNA_NEW_SNAPSHOT(iname) \
-	void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World &world)
+	template<::tuna::ScriptT BaseScript> \
+    void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World<BaseScript> &world)
 // Load snapshot
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
 	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
