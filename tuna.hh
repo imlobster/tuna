@@ -186,23 +186,20 @@ public:
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) [[unlikely]] return;
 
-		std::vector<std::weak_ptr<Script>> actives, deads;
+		std::vector<std::weak_ptr<Script>> actives;
 
 		if(last_script_count <= 0)
 			last_script_count = objects.size();
 
-		actives.reserve(last_script_count); deads.reserve(last_script_count);
+		actives.reserve(last_script_count);
 
 		for(const auto &[objectid, object] : objects) if(object) [[likely]]
-			for(auto &script : object->scripts) if(script) [[likely]] {
-				if(kill_queue.contains(objectid)) deads.emplace_back(script);
-				else actives.emplace_back(script);
-			}
+			for(auto &script : object->scripts) if(script) [[likely]]
+				if(!kill_queue.contains(objectid)) actives.emplace_back(script);
 
-		if(!deads.empty()) {
+		if(!kill_queue.empty()) {
 			for(ObjectID id : kill_queue) objects.erase(id);
 			kill_queue.clear();
-			deads.clear();
 		}
 
 		if(!actives.empty()) [[likely]]
@@ -269,8 +266,8 @@ struct locked_ptr {
 	iname##_TUNA_SNAPSHOT_MARK_
 // Define snapshot
 #define TUNA_NEW_SNAPSHOT(iname) \
-	template<::tuna::ScriptT BaseScript> \
-    void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World<BaseScript> &world)
+	template<::tuna::ScriptT BASE_SCRIPT> \
+    void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World<BASE_SCRIPT> &world)
 // Load snapshot
 #define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
 	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
