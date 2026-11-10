@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <cstdint>
 #ifndef TUNA_RESTRICT_ANY_IO
 	#include <cstdio>
@@ -17,8 +18,8 @@
 #include <concepts>
 #include <algorithm>
 #include <vector>
-#include <unordered_map>
 #include <unordered_set>
+#include <typeinfo>
 
 namespace tuna {
 
@@ -27,6 +28,7 @@ namespace tuna {
 // Script base class:
 //     Inherit the script from this
 //     class to be able to assign it to an object.
+// NOTE: Mutation World from Script's destructors or constructors leads to World::dispatch invalidation
 class Script;
 
 // Script concept
@@ -34,15 +36,11 @@ template<typename T>
 concept ScriptT = std::derived_from<T, Script>;
 
 // Game object:
-//     Script container.
+//     Script container
 class Object;
 // Game world:
-//     Manages objects and the game loop.
-template<ScriptT BASE_SCRIPT>
+//     Manages objects and the game loop
 class World;
-
-// Game object identifier
-using ObjectID = std::uint64_t;
 
 	// Core types implementation
 
@@ -59,13 +57,6 @@ class Object : public std::enable_shared_from_this<Object> {
 public:
 	// Script container
 	std::vector<std::shared_ptr<Script>> scripts;
-
-	// Object identifier
-	const ObjectID id;
-
-public:
-	// Default constructor
-	Object(ObjectID iid) : id(iid) { }
 
 	// Scripts manipulations
 
@@ -87,12 +78,9 @@ public:
 		return std::weak_ptr<T>();
 	}
 
-	// Grant a script to the object:
-	//     If the script has already
-	//     been provided to the object,
-	//     the method will return a
-	//     reference to it. Arguments passed
-	//     to the constructor will be ignored.
+	// Grant a script to the object
+	// NOTE: If the script has already been provided to the object, the method will return a reference to it. Arguments passed to the constructor will be ignored
+	// NOTE: Mixing different base scripts leads to UB
 	template<ScriptT T, typename... ARGS>
 	std::weak_ptr<T> grant(ARGS&&... iargs) {
 		// If a script is already on the object -- return it
@@ -118,18 +106,14 @@ public:
 	void clean(void) { scripts.clear(); return; }
 };
 
-template<ScriptT BASE_SCRIPT>
 class World {
 public:
 	// Object container
-	std::unordered_map<ObjectID, std::shared_ptr<Object>> objects;
+	std::vector<std::shared_ptr<Object>> objects;
 
 private:
 	// Kill queue
-	std::unordered_set<ObjectID> kill_queue;
-
-	// Global ObjectID
-	ObjectID last_id = -1;
+	std::unordered_set<const Object*> kill_queue;
 
 	// Storage of the scripts that
 	// were found active in dispatch
@@ -142,29 +126,14 @@ public:
 	void clean(void) {
 		objects.clear();
 		kill_queue.clear();
-		last_id = -1;
 		return;
 	}
 
 	// Create an object in the world
 	std::weak_ptr<Object> create(void) {
-		ObjectID new_id = 1 + last_id;
-			std::shared_ptr<Object> object = std::make_shared<Object>(new_id);
-		last_id = new_id;
-
-		std::weak_ptr<Object> ref = object;
-		objects.emplace(last_id, std::move(object));
-		return ref;
-	}
-
-	// Find the object in the world
-	std::weak_ptr<Object> seek(ObjectID iid) {
-		if(objects.empty()) [[unlikely]]
-			return std::weak_ptr<Object>();
-		auto found = objects.find(iid);
-		if(found == objects.end())
-			return std::weak_ptr<Object>();
-		return std::weak_ptr<Object>(found->second);
+		std::shared_ptr<Object> &oobj
+			= objects.emplace_back(std::make_shared<Object>());
+		return oobj;
 	}
 
 	// Kill the object in the world:
@@ -174,29 +143,31 @@ public:
 	//     added to the kill queue
 	//     and will only be removed
 	//     on the next call to World::dispatch().
-	bool kill(ObjectID iid) {
-		if(!objects.contains(iid)) return false;
-		kill_queue.emplace(iid);
+	bool kill(const std::weak_ptr<Object> &iobj) {
+		auto ptr = iobj.lock();
+		if(!ptr) return false;
+		kill_queue.emplace(ptr.get());
 		return true;
 	}
 
 	// Call a method on every object's script in the world
-	template<auto METHOD, typename... ARGS>
+	template<ScriptT BASE_SCRIPT, auto METHOD, typename... ARGS>
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) [[unlikely]] return;
 
-		for(const auto &[objectid, object] : objects) if(object) [[likely]]
-			for(auto &script : object->scripts) if(script) [[likely]]
-				if(!kill_queue.contains(objectid)) actives.emplace_back(script);
+		for(const auto &object : objects) if(object) [[likely]]
+			if(!kill_queue.contains(object.get())) [[likely]]
+				for(auto &script : object->scripts) if(script) [[likely]]
+					actives.emplace_back(script);
 
 		if(!kill_queue.empty()) {
-			for(ObjectID id : kill_queue) objects.erase(id);
+			std::erase_if(objects, [&](const auto &o) { return kill_queue.contains(o.get()); });
 			kill_queue.clear();
 		}
 
 		if(!actives.empty()) [[likely]]
 			for(auto &active : actives) if(auto ptr = active.lock())
-				(static_cast<BASE_SCRIPT*>(ptr.get())->*METHOD)(std::forward<ARGS>(iargs)...);
+				(static_cast<BASE_SCRIPT*>(ptr.get())->*METHOD)(iargs...);
 
 		actives.clear();
 		return;
@@ -209,10 +180,12 @@ public:
 
 // Locked pointer:
 //     std::shared_ptr wrapper.
-//     Use this when obtaining a null pointer from
-//     std::weak_ptr::lock() is not acceptable.
+//     Use this when obtaining a null pointer
+//     from std::weak_ptr::lock() is not acceptable.
+// NOTE: Usage in non-local contexts leads to World::dispatch invalidation
 template<typename T>
 struct locked_ptr {
+
 	std::shared_ptr<T> ptr;
 
 	T* operator->() { return ptr.get(); }
@@ -223,8 +196,9 @@ struct locked_ptr {
 
 	operator std::shared_ptr<T>() { return ptr; }
 
-	template<typename U>
-	locked_ptr(std::weak_ptr<U> isource) {
+	operator std::weak_ptr<T>() { return ptr; }
+
+	locked_ptr(std::weak_ptr<T> isource) {
 		ptr = isource.lock();
 		if(ptr) return;
 
@@ -258,11 +232,10 @@ struct locked_ptr {
 	iname##_TUNA_SNAPSHOT_MARK_
 // Define snapshot
 #define TUNA_NEW_SNAPSHOT(iname) \
-	template<::tuna::ScriptT BASE_SCRIPT> \
-    void iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World<BASE_SCRIPT> &world)
+    int iname##_TUNA_SNAPSHOT_MARK_ (::tuna::World &world)
 // Load snapshot
-#define TUNA_LOAD_SNAPSHOT(isnapshot_name, iworld) \
-	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (iworld)
+#define TUNA_LOAD_SNAPSHOT(isnapshot_name, ...) \
+	isnapshot_name##_TUNA_SNAPSHOT_MARK_ (__VA_ARGS__)
 
 // tuna samples:
 //     Samples are an alternative to
@@ -274,6 +247,9 @@ struct locked_ptr {
 #define TUNA_SAMPLE(iname) \
 	iname##_TUNA_SAMPLE_MARK_
 // Define sample
-#define TUNA_NEW_SAMPLE(iname) \
-	void iname##_TUNA_SAMPLE_MARK_
+#define TUNA_NEW_SAMPLE(iname, ...) \
+	int iname##_TUNA_SAMPLE_MARK_ (__VA_ARGS__)
+// Load sample
+#define TUNA_LOAD_SAMPLE(iname, ...) \
+	iname##_TUNA_SAMPLE_MARK_ (__VA_ARGS__)
 
