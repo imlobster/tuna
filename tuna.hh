@@ -1,6 +1,6 @@
 /*
-	tuna                 maybe the tiniest C++ game framework
-	Copyright (C) 2026        imlobster <zhizhilik@gmail.com>
+	tuna                maybe the tiniest c++ game framework
+	Copyright (C) 2026                             imlobster
 
 	This Source Code Form is subject to the terms of the Mozilla Public
 	License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -26,8 +26,9 @@ namespace tuna {
 	// Core types
 
 // Script base class:
-//     Inherit the script from this
-//     class to be able to assign it to an object.
+//     Inherit from this class to define
+//     your script base that will be used
+//     for all scripts in your project.
 // NOTE: Mutation World from Script's destructors or constructors leads to World::dispatch invalidation
 class Script;
 
@@ -155,6 +156,11 @@ public:
 	void dispatch(ARGS&&... iargs) {
 		if(objects.empty()) [[unlikely]] return;
 
+		struct _ {
+			decltype(actives) &a;
+			~_() { a.clear(); }
+		} cleanup { actives }; // Always clearing actives
+
 		for(const auto &object : objects) if(object) [[likely]]
 			if(!kill_queue.contains(object.get())) [[likely]]
 				for(auto &script : object->scripts) if(script) [[likely]]
@@ -169,7 +175,6 @@ public:
 			for(auto &active : actives) if(auto ptr = active.lock())
 				(static_cast<BASE_SCRIPT*>(ptr.get())->*METHOD)(iargs...);
 
-		actives.clear();
 		return;
 	}
 };
